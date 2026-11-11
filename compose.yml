@@ -1,0 +1,46 @@
+# Local VieNeu-TTS speech API (apps/openai_speech.py) for podman-compose,
+# run by the systemd user unit podman-vieneu.service.
+#   podman-compose build            # first time, and after `git pull`
+#   systemctl --user start podman-vieneu
+#   -> http://127.0.0.1:8000/v1  (multix's default VIENEU_LOCAL_BASE_URL)
+# Settings: .env next to this file (gitignored).
+
+services:
+  api:
+    image: localhost/vieneu-tts:gpu
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gpu
+      target: prod
+    container_name: vieneu-tts-api
+    command: ["python", "-m", "apps.openai_speech"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"   # loopback only
+    environment:
+      - HOST=0.0.0.0   # inside the container; the host side is bound to loopback above
+      - PORT=8000
+      - PYTHONUNBUFFERED=1
+      - VIENEU_MAX_STREAMS=${VIENEU_MAX_STREAMS:-16}
+      - VIENEU_QUEUE=${VIENEU_QUEUE:-16}
+      - VIENEU_QUEUE_TIMEOUT=${VIENEU_QUEUE_TIMEOUT:-10}
+      - VIENEU_API_KEY=${VIENEU_API_KEY:-}
+      - VIENEU_WATERMARK=${VIENEU_WATERMARK:-1}
+    volumes:
+      - huggingface_cache:/home/app/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  huggingface_cache:
