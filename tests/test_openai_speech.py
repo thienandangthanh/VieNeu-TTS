@@ -15,6 +15,7 @@ from apps import openai_speech as api
 
 class FakeTTS:
     backend = "onnx"
+    default_style = "tu_nhien"
 
     def __init__(self):
         self._preset_voices = {"Hải Đăng": {}, "Mai Anh": {}}
@@ -40,13 +41,20 @@ class FakeTTS:
 
     def add_voice(self, name, path, **kw):
         self.enrolled.append(name)
-        self._preset_voices[name] = {}
+        self._preset_voices[name] = {
+            "description": kw.get("description", ""),
+            "gender": "",
+            "style": self.default_style,
+            "speaker_emb": np.full(192, 0.5, dtype=np.float32),
+            "codes": np.arange(6, dtype=np.int64),
+        }
 
 
 @pytest.fixture
-def eng(monkeypatch):
+def eng(monkeypatch, tmp_path):
     for var in ("VIENEU_API_KEY", "VIENEU_MAX_STREAMS", "VIENEU_QUEUE"):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("VIENEU_HOME", str(tmp_path))
     monkeypatch.setattr(api, "Vieneu", lambda **kw: FakeTTS())
     e = api.Engine()
     monkeypatch.setattr(api, "ENGINE", e)
@@ -148,11 +156,20 @@ def test_builtin_voice_cannot_be_replaced(client, eng, name):
     assert eng.tts.enrolled == []
 
 
-def test_new_voice_is_enrolled(client, eng):
-    r = client.post("/v1/voices", data={"name": "Giọng của tôi"},
-                    files={"file": ("me.wav", b"RIFF", "audio/wav")})
+def test_new_voice_is_enrolled_and_loaded_after_restart(client, eng, tmp_path):
+    name = "Giọng của tôi"
+    r = client.post(
+        "/v1/voices",
+        data={"name": name},
+        files={"file": ("me.wav", b"RIFF", "audio/wav")},
+    )
     assert r.status_code == 200
-    assert eng.tts.enrolled == ["Giọng của tôi"]
+    assert eng.tts.enrolled == [name]
+    assert (tmp_path / "user_voices_v3_turbo.json").is_file()
+
+    fresh = api.Engine()
+    assert fresh.tts.resolve_voice_name(name) == name
+    assert name not in fresh.builtin_voices
 
 
 def test_dead_scheduler_fails_health_and_new_requests(client, eng):

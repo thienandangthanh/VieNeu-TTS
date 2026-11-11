@@ -35,6 +35,8 @@ Request body (OpenAI fields + a few extras, all optional but ``input``):
 
 POST /v1/voices refuses (409) the name of a built-in voice or alias, so a client
 cannot swap out a voice other clients rely on (e.g. the default one).
+Cloned voices are saved below ``VIENEU_HOME`` and loaded at startup.
+
 
 Concurrency: GPU serves ``VIENEU_MAX_STREAMS`` streams at once (continuous
 batching, default 16); CPU serves one (fp32) or two (int8) — the ONNX engine
@@ -77,6 +79,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from apps.user_voices import load_user_voices, persist_user_voice
+
 from vieneu import Vieneu
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -109,10 +113,18 @@ class Engine:
         log.info("⏳ loading VieNeu-TTS v3 Turbo (backend=%s device=%s)", backend, device)
         t = time.perf_counter()
         self.tts = Vieneu(mode="v3turbo", **kw)
+        # Capture built-ins and aliases before loading user voices so clients may
+        # replace their persisted clones, but never an engine-provided name.
+        self.builtin_voices = (
+            frozenset(self.tts._preset_voices) | frozenset(self.tts._voice_aliases)
+        )
+        loaded_voices = load_user_voices(self.tts)
+        log.info(
+            "loaded %d persisted user voice(s): %r",
+            len(loaded_voices),
+            loaded_voices,
+        )
         self.backend = self.tts.backend
-        # The voices and aliases that exist before any client enrolls one;
-        # POST /v1/voices may not replace them.
-        self.builtin_voices = frozenset(self.tts._preset_voices) | frozenset(self.tts._voice_aliases)
         self.watermark = os.environ.get("VIENEU_WATERMARK", "1") != "0"
         # GPU: the scheduler batches every stream. CPU: the ONNX engine interleaves
         # calls frame by frame, but they share the cores — measured on a 6-core
@@ -442,10 +454,11 @@ _MAX_CLIP_BYTES = 20 * 1024 * 1024
 @app.post("/v1/voices", dependencies=[Depends(_auth)])
 def add_voice(name: str = Form(...), file: UploadFile = File(...), denoise: bool = Form(True),
               description: str = Form("")):
-    """Enroll a 3-8 s reference clip as ``voice=name`` (in memory, for this process).
+    """Enroll and persist a 3-8 s reference clip as ``voice=name``.
 
-    Plain ``def``: FastAPI runs it in a thread, so the blocking upload read,
-    temp file and enrolment do not stall the event loop.
+    Clones are saved below ``VIENEU_HOME`` and loaded at process startup. Plain
+    ``def`` lets FastAPI run the blocking upload, temp file, and enrollment in a
+    worker thread without stalling the event loop.
     """
     import tempfile
     eng = engine()
@@ -465,7 +478,13 @@ def add_voice(name: str = Form(...), file: UploadFile = File(...), denoise: bool
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        eng.tts.add_voice(name, path, denoise=denoise, description=description)
+        persist_user_voice(
+            eng.tts,
+            name,
+            path,
+            denoise=denoise,
+            description=description,
+        )
     except HTTPException:
         raise
     except Exception as e:   # noqa: BLE001

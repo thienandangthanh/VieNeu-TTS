@@ -108,7 +108,7 @@ With `response_format=wav` + `sse`, the first event is the WAV header (base64).
 |---|---|
 | `GET /v1/models` | Model, `sample_rate`, `backend`, `max_streams`, supported formats |
 | `GET /v1/voices` | Presets (`id`, `name`, `description`, `gender`) |
-| `POST /v1/voices` | multipart `name`, `file` (3–8 s clip), `denoise` — clones a voice, kept in process memory. The name of a built-in voice or alias → `409` |
+| `POST /v1/voices` | multipart `name`, `file` (3–8 s clip), `denoise` — clones a voice, saves it below `VIENEU_HOME`, and reloads it at startup. Persistence across container recreation requires durable storage at that path. The name of a built-in voice or alias → `409` |
 | `GET /health` | `active` (playing), `waiting` (queued), `max_streams`. `503` once the GPU stream scheduler has died (it does not recover — the Docker healthcheck restarts the container) |
 
 ### Clients

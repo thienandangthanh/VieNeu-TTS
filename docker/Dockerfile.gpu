@@ -36,6 +36,10 @@ WORKDIR /workspace
 # runs straight from the source tree via PYTHONPATH.
 COPY --chown=app:app pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra cuda --no-install-project --no-build
+# Own persistent mount points before named volumes are initialized. Otherwise
+# root owns them and the app cannot write cache data or saved cloned voices.
+RUN mkdir -p /home/app/.cache /home/app/.vieneu \
+    && chown app:app /home/app/.cache /home/app/.vieneu
 
 # --- Stage: dev (source is bind-mounted by docker-compose) ---
 FROM base AS dev

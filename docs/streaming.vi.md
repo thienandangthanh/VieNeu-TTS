@@ -108,7 +108,7 @@ Với `response_format=wav` + `sse`, event đầu tiên là header WAV (base64).
 |---|---|
 | `GET /v1/models` | Model, `sample_rate`, `backend`, `max_streams`, định dạng hỗ trợ |
 | `GET /v1/voices` | Danh sách preset (`id`, `name`, `description`, `gender`) |
-| `POST /v1/voices` | multipart `name`, `file` (clip 3–8 s), `denoise` — nhân bản giọng, giữ trong bộ nhớ tiến trình. Trùng tên giọng có sẵn hoặc alias → `409` |
+| `POST /v1/voices` | multipart `name`, `file` (clip 3–8 s), `denoise` — nhân bản giọng, lưu dưới `VIENEU_HOME` và nạp lại khi khởi động. Muốn giọng tồn tại sau khi tạo lại container, đường dẫn đó phải được gắn vào storage bền vững. Trùng tên giọng có sẵn hoặc alias → `409` |
 | `GET /health` | `active` (đang phát), `waiting` (đang xếp hàng), `max_streams`. `503` khi scheduler streaming GPU đã chết (không tự hồi phục — healthcheck của Docker sẽ restart container) |
 
 ### Client

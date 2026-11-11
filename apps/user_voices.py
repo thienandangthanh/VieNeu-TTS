@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,6 +24,7 @@ import numpy as np
 
 USER_MARK = "_user"          # key set on tts._preset_voices entries that came from here
 DEFAULT_DESC = "giọng đã lưu"
+_STORE_LOCK = threading.Lock()
 
 
 def _kind(tts) -> str:
@@ -119,6 +121,36 @@ def _write(tts) -> Path:
     return path
 
 
+def persist_user_voice(
+    tts,
+    name: str,
+    ref_audio: str,
+    *,
+    denoise: bool = True,
+    description: str = "",
+) -> str:
+    """Enroll a validated named preset and atomically persist all user voices."""
+    if not supports_saving(tts):
+        raise ValueError("Chỉ VieNeu v3 (Turbo / Nano) mới lưu được giọng.")
+    with _STORE_LOCK:
+        existing = tts._preset_voices.get(name)
+        if existing is not None and (
+            not isinstance(existing, dict) or not existing.get(USER_MARK)
+        ):
+            raise ValueError(f"'{name}' là giọng có sẵn của VieNeu, hãy chọn tên khác.")
+        tts.add_voice(
+            name,
+            ref_audio,
+            denoise=denoise,
+            description=(description or "").strip() or DEFAULT_DESC,
+        )
+        entry = tts._preset_voices[name]
+        entry[USER_MARK] = True
+        entry["podcast"] = True
+        _write(tts)
+    return name
+
+
 def save_user_voice(tts, name: str, ref_audio: str, *, denoise: bool = True, description: str = "") -> str:
     """Enroll ``ref_audio`` as a named preset and persist it. Returns the voice id.
     A name that belongs to a built-in voice is refused; re-saving one of the
@@ -134,22 +166,21 @@ def save_user_voice(tts, name: str, ref_audio: str, *, denoise: bool = True, des
         raise ValueError("Tên giọng không được chứa dấu gạch dài (—).")
     if not ref_audio:
         raise ValueError("Hãy tải lên audio mẫu trước.")
-    existing = tts._preset_voices.get(name)
-    if existing is not None and not existing.get(USER_MARK):
-        raise ValueError(f"'{name}' là giọng có sẵn của VieNeu, hãy chọn tên khác.")
-    tts.add_voice(name, ref_audio, denoise=denoise, description=(description or "").strip() or DEFAULT_DESC)
-    entry = tts._preset_voices[name]
-    entry[USER_MARK] = True
-    entry["podcast"] = True
-    _write(tts)
-    return name
+    return persist_user_voice(
+        tts,
+        name,
+        ref_audio,
+        denoise=denoise,
+        description=description,
+    )
 
 
 def delete_user_voice(tts, name: str) -> None:
     if not supports_saving(tts) or not name:
         return
-    entry = tts._preset_voices.get(name)
-    if entry is None or not entry.get(USER_MARK):
-        raise ValueError("Chỉ xoá được giọng do bạn lưu.")
-    tts.remove_voice(name)
-    _write(tts)
+    with _STORE_LOCK:
+        entry = tts._preset_voices.get(name)
+        if entry is None or not entry.get(USER_MARK):
+            raise ValueError("Chỉ xoá được giọng do bạn lưu.")
+        tts.remove_voice(name)
+        _write(tts)
